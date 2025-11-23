@@ -23,6 +23,9 @@ export class SoftBodySystem {
 
   // Horn tracking
   horns: { id: string }[] = [];
+  
+  // Time for animation
+  time: number = 0;
 
   reset() {
       this.objects = [];
@@ -39,6 +42,17 @@ export class SoftBodySystem {
   vSub(a: Vector3, b: Vector3): Vector3 { return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
   vScale(a: Vector3, s: number): Vector3 { return { x: a.x * s, y: a.y * s, z: a.z * s }; }
   vLen(a: Vector3): number { return Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z); }
+  vCross(a: Vector3, b: Vector3): Vector3 {
+      return {
+          x: a.y * b.z - a.z * b.y,
+          y: a.z * b.x - a.x * b.z,
+          z: a.x * b.y - a.y * b.x
+      };
+  }
+  vNorm(a: Vector3): Vector3 {
+      const l = this.vLen(a);
+      return l > 0 ? this.vScale(a, 1/l) : {x:0, y:0, z:0};
+  }
   
   // Quaternion Math
   qMult(q1: Quaternion, q2: Quaternion): Quaternion {
@@ -75,7 +89,99 @@ export class SoftBodySystem {
       };
   }
 
+  // --- GEOMETRY GENERATORS ---
+
+  generateEllipsoid(rx: number, ry: number, rz: number, wSeg: number, hSeg: number, color: string) {
+      const vertices: Vector3[] = [];
+      const faces: Face[] = [];
+      
+      for(let i=0; i<=hSeg; i++) {
+          const v = i / hSeg;
+          const phi = v * Math.PI;
+          for(let j=0; j<=wSeg; j++) {
+              const u = j / wSeg;
+              const theta = u * Math.PI * 2;
+              
+              const x = rx * Math.sin(phi) * Math.cos(theta);
+              const y = ry * Math.cos(phi);
+              const z = rz * Math.sin(phi) * Math.sin(theta);
+              vertices.push({x,y,z});
+          }
+      }
+
+      for(let i=0; i<hSeg; i++) {
+          for(let j=0; j<wSeg; j++) {
+              const p1 = i * (wSeg+1) + j;
+              const p2 = p1 + (wSeg+1);
+              const p3 = p1 + 1;
+              const p4 = p2 + 1;
+              
+              // Quad split into 2 tris
+              faces.push({ indices: [p1, p2, p3], color });
+              faces.push({ indices: [p3, p2, p4], color });
+          }
+      }
+      return { vertices, faces };
+  }
+
+  generateCone(radius: number, height: number, seg: number, color: string) {
+      const vertices: Vector3[] = [];
+      const faces: Face[] = [];
+      
+      // Base center
+      vertices.push({x:0, y:0, z:0}); // 0
+      // Tip
+      vertices.push({x:0, y:-height, z:0}); // 1
+      
+      for(let i=0; i<seg; i++) {
+          const theta = (i/seg) * Math.PI * 2;
+          vertices.push({
+              x: Math.cos(theta) * radius,
+              y: 0,
+              z: Math.sin(theta) * radius
+          });
+      }
+      
+      // Tip faces
+      for(let i=0; i<seg; i++) {
+          const curr = 2 + i;
+          const next = 2 + (i + 1) % seg;
+          faces.push({ indices: [1, next, curr], color });
+      }
+      return { vertices, faces };
+  }
+
   // --- 3D SPAWNERS ---
+
+  spawnDragon(x: number, y: number) {
+      // Create Torso as the physics proxy
+      // Ellipsoid: 80x50x60
+      const mesh = this.generateEllipsoid(40, 25, 30, 12, 8, '#4ade80');
+      
+      this.rigidBodies.push({
+          id: `dragon-${Date.now()}`,
+          type: 'dragon',
+          position: { x, y, z: 0 },
+          rotation: { x: 0, y: 0, z: 0, w: 1 },
+          scale: { x: 1, y: 1, z: 1 },
+          velocity: { x: 0, y: 0, z: 0 },
+          angularVelocity: { x: 0, y: 0, z: 0 },
+          vertices: mesh.vertices,
+          faces: mesh.faces,
+          isHeld: false,
+          snapTarget: null,
+          snapTimer: 0,
+          color: '#4ade80',
+          glow: 0,
+          dragonConfig: {
+              jawAngle: 0,
+              neckPhase: 0,
+              wingPhase: 0,
+              eyeColor: '#fcd34d',
+              scale: 1.0
+          }
+      });
+  }
 
   spawnCube3D(x: number, y: number) {
       const size = 60;
@@ -204,40 +310,6 @@ export class SoftBodySystem {
           texture: img,
           isMesh: true
       });
-  }
-
-  spawnCat(cx: number, cy: number) {
-    const points: Point[] = [];
-    const sticks: Stick[] = [];
-    const addP = (x: number, y: number) => {
-        const p = { x, y, oldX: x, oldY: y, isPinned: false, u:0, v:0 };
-        points.push(p);
-        return p;
-    };
-    const addS = (p1: Point, p2: Point) => {
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        sticks.push({ p0: p1, p1: p2, length: Math.sqrt(dx*dx + dy*dy) });
-    };
-    const radius = 60;
-    const segments = 12;
-    const center = addP(cx, cy);
-    const rimPoints: Point[] = [];
-    for (let i=0; i<segments; i++) {
-        const theta = (i/segments) * Math.PI * 2;
-        const p = addP(cx + Math.cos(theta)*radius, cy + Math.sin(theta)*radius);
-        rimPoints.push(p);
-        addS(center, p);
-        if(i > 0) addS(rimPoints[i-1], p);
-    }
-    addS(rimPoints[segments-1], rimPoints[0]);
-    this.objects.push({ 
-        id: Math.random().toString(),
-        type: 'generic',
-        points, 
-        sticks, 
-        color: '#d946ef'
-    });
   }
 
   spawnCar(cx: number, cy: number) {
@@ -429,46 +501,68 @@ export class SoftBodySystem {
           rightHorn = { id: rightHornId, type: 'devil_horn', points: [], sticks: [], color: '#dc2626', growth: 0, config: { side: 'right' } };
           this.objects.push(rightHorn);
       }
-      const growthSpeed = 0.05;
-      if (isGestureActive) {
-          if (leftHorn.growth! < 1.0) leftHorn.growth! += growthSpeed;
-          if (rightHorn.growth! < 1.0) rightHorn.growth! += growthSpeed;
+      
+      if (!isGestureActive) {
+          // INSTANT OFF
+          leftHorn.growth = 0;
+          rightHorn.growth = 0;
+          return; 
+      } else {
+          // INSTANT POP-IN
+          leftHorn.growth = 1.0;
+          rightHorn.growth = 1.0;
       }
+
       const getPt = (idx: number) => ({
           x: (1 - faceLandmarks[idx].x) * canvasWidth,
           y: faceLandmarks[idx].y * canvasHeight
       });
-      const headTop = getPt(10);
+      
       const foreheadLeft = getPt(105);
       const foreheadRight = getPt(334);
+      
       const headWidth = Math.hypot(foreheadRight.x - foreheadLeft.x, foreheadRight.y - foreheadLeft.y);
-      const scale = headWidth * 1.5; 
-      const dx = foreheadRight.x - foreheadLeft.x;
-      const dy = foreheadRight.y - foreheadLeft.y;
-      const angle = Math.atan2(dy, dx); 
-      leftHorn.points = [ { x: foreheadRight.x, y: foreheadRight.y, oldX:0, oldY:0, isPinned:true, u:0, v:0 } ];
-      leftHorn.config.baseAngle = angle - Math.PI / 3; 
+      // STRICT SCALING: 0.18 proportional visual width approx
+      // The drawer uses scale as pixels, so we pass exact pixels.
+      const scale = headWidth * 0.4; 
+      
+      const angle = Math.atan2(foreheadRight.y - foreheadLeft.y, foreheadRight.x - foreheadLeft.x);
+      
+      // STRICT LOCKING - No smoothing, no oldX/oldY interpolation
+      leftHorn.points = [ { x: foreheadRight.x, y: foreheadRight.y, oldX: foreheadRight.x, oldY: foreheadRight.y, isPinned:true, u:0, v:0 } ];
+      leftHorn.config.baseAngle = angle; 
       leftHorn.config.scale = scale;
-      rightHorn.points = [ { x: foreheadLeft.x, y: foreheadLeft.y, oldX:0, oldY:0, isPinned:true, u:0, v:0 } ];
-      rightHorn.config.baseAngle = angle - Math.PI + Math.PI / 3; 
+      
+      rightHorn.points = [ { x: foreheadLeft.x, y: foreheadLeft.y, oldX: foreheadLeft.x, oldY: foreheadLeft.y, isPinned:true, u:0, v:0 } ];
+      rightHorn.config.baseAngle = angle; 
       rightHorn.config.scale = scale;
   }
 
   // --- 3D INTERACTION ---
 
-  handleInteraction3D(handId: number, x: number, y: number, z: number, isPinching: boolean, rotationAngle: number) {
-    if (isPinching) {
+  handleInteraction3D(handId: number, x: number, y: number, z: number, isGrabbing: boolean, rotationAngle: number) {
+    // 1. Reset generic interaction glow if not held
+    this.rigidBodies.forEach(b => {
+        if (!b.isHeld && b.glow < 0.5) b.glow = 0;
+    });
+
+    if (isGrabbing) {
         if (!this.heldObjects.has(handId)) {
-            // Find closest object in 3D screen space
-            let closestDist = 100;
+            // TRY TO GRAB (PINCH or FIST)
+            let closestDist = Infinity;
             let target: RigidBody3D | null = null;
             
-            // Simple Raycast-like check: distance on screen plane
+            // Screen space hit test using volumetric collider radius
             for (const body of this.rigidBodies) {
                 const dx = body.position.x - x;
                 const dy = body.position.y - y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist < closestDist) {
+                
+                // Scale-based Volumetric Collider: Scale * 60 (base size) * 0.7 (radius factor) * 1.3 (margin)
+                const size = Math.max(body.scale.x, body.scale.y, body.scale.z) * 60; 
+                const colliderRadius = size * 0.7 * 1.3; 
+                
+                if (dist < colliderRadius && dist < closestDist) {
                     closestDist = dist;
                     target = body;
                 }
@@ -476,47 +570,40 @@ export class SoftBodySystem {
 
             if (target) {
                 target.isHeld = true;
-                target.snapTarget = null; // Break existing snap
+                target.snapTarget = null; // Break stack
                 target.glow = 1.0;
-                // Store initial offsets to keep hold smooth
+                
+                // Attach to hand
                 this.heldObjects.set(handId, {
                     bodyId: target.id,
                     offset: { x: target.position.x - x, y: target.position.y - y, z: target.position.z - z },
                     initialHandRot: rotationAngle,
-                    initialObjRot: target.rotation // Would need conversion to Euler Y to apply properly, keeping simple for now
+                    initialObjRot: target.rotation
                 });
             }
         } else {
-            // DRAG
+            // HOLDING / DRAGGING
             const hold = this.heldObjects.get(handId)!;
             const body = this.rigidBodies.find(b => b.id === hold.bodyId);
             if (body) {
-                // Position update (Spring-like lerp)
+                body.glow = 1.0; 
+                
+                // Position follow with spring smoothing
                 const tx = x + hold.offset.x;
                 const ty = y + hold.offset.y;
-                // For Z, we use hand Z.
                 const tz = z + hold.offset.z;
 
-                // Smooth follow
-                body.position.x += (tx - body.position.x) * 0.3;
-                body.position.y += (ty - body.position.y) * 0.3;
-                body.position.z += (tz - body.position.z) * 0.3;
+                body.position.x += (tx - body.position.x) * 0.4; 
+                body.position.y += (ty - body.position.y) * 0.4;
+                body.position.z += (tz - body.position.z) * 0.4;
                 
                 body.velocity = { x: 0, y: 0, z: 0 }; // Zero physics velocity while holding
 
-                // Rotation: Add Delta of hand rotation to object
-                // We map 2D hand rotation (twist) to Y-axis rotation
-                // NOTE: This resets rotation if we aren't careful.
-                // Better: Delta rotation.
+                // Rotation Manipulation
                 const deltaRot = rotationAngle - hold.initialHandRot;
-                // Reset initial to avoid continuous spinning
-                // hold.initialHandRot = rotationAngle; // Uncomment for continuous
-                
-                // Simple Y-axis spin based on wrist angle
-                // Create a quaternion for the Y axis rotation
-                const qY = this.qFromAxisAngle({x:0, y:1, z:0}, deltaRot * 0.1); // Sensitivity
+                const qY = this.qFromAxisAngle({x:0, y:1, z:0}, deltaRot * 0.15); 
                 body.rotation = this.qMult(body.rotation, qY);
-                hold.initialHandRot = rotationAngle; // Accumulate
+                hold.initialHandRot = rotationAngle;
             }
         }
     } else {
@@ -526,51 +613,49 @@ export class SoftBodySystem {
             const body = this.rigidBodies.find(b => b.id === hold.bodyId);
             if (body) {
                 body.isHeld = false;
-                // Check Stacking
                 this.checkSnapping(body);
             }
             this.heldObjects.delete(handId);
+        }
+
+        // HOVER CHECK (Highlight receptor)
+        // Global Hover Logic for Open Hand
+        for (const body of this.rigidBodies) {
+            const dx = body.position.x - x;
+            const dy = body.position.y - y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const size = Math.max(body.scale.x, body.scale.y, body.scale.z) * 60;
+            const colliderRadius = size * 0.7 * 1.3;
+
+            if (dist < colliderRadius) {
+                body.glow = Math.max(body.glow, 0.4); // Light up yellow/white
+            }
         }
     }
   }
 
   checkSnapping(active: RigidBody3D) {
-      // Find a body strictly below this one
-      // Since Y is down in canvas, "below" means target.y > active.y ? No, visually below.
-      // In 3D world: Y usually Up. In this canvas: Y is Down.
-      // So "Object on Floor" has High Y. "Object in Air" has Low Y.
-      // If we stack A on B, A is "above" B physically, so A.y < B.y.
-      
-      const threshold = 50; // Horizontal snapping forgiveness
-
+      const threshold = 50; 
       for (const other of this.rigidBodies) {
           if (other.id === active.id) continue;
           
           const dx = Math.abs(active.position.x - other.position.x);
           const dz = Math.abs(active.position.z - other.position.z);
           
-          // Check if horizontally aligned
           if (dx < threshold && dz < threshold) {
-              // Check vertical relation. Active should be roughly 1 unit 'above' Other.
-              // active.y should be less than other.y
               const dy = other.position.y - active.position.y;
-              
-              // Expected distance is roughly (half_height_A + half_height_B)
-              const expectedDist = 60; // Assuming uniform size for now (60 unit cubes)
+              const expectedDist = 60; 
               
               if (dy > 0 && dy < expectedDist + 40) {
-                  // SNAP!
                   active.snapTarget = other.id;
                   active.position.x = other.position.x;
                   active.position.z = other.position.z;
                   active.position.y = other.position.y - expectedDist;
-                  active.rotation = other.rotation; // Align rotation for neat stacks
+                  active.rotation = other.rotation; 
                   active.velocity = {x:0,y:0,z:0};
-                  active.glow = 1.0; // Visual feedback
+                  active.glow = 1.0; 
                   other.glow = 0.5;
-                  
-                  // Stabilization
-                  active.snapTimer = 20; // Frames to freeze physics
+                  active.snapTimer = 20; 
                   break;
               }
           }
@@ -646,6 +731,8 @@ export class SoftBodySystem {
   }
 
   update(width: number, height: number) {
+      this.time += 0.05;
+      
       // --- 2D SOFT BODIES ---
       for (const obj of this.objects) {
           if (obj.type === 'devil_horn') continue;
@@ -694,6 +781,12 @@ export class SoftBodySystem {
       const cubeHalf = 30; // Half size approx
       
       for (const body of this.rigidBodies) {
+          // Animation updates for dragon
+          if (body.type === 'dragon' && body.dragonConfig) {
+             body.dragonConfig.neckPhase = this.time;
+             body.dragonConfig.jawAngle = Math.sin(this.time * 2) * 0.2 + 0.2; // Breathing motion
+          }
+
           if (body.glow > 0) body.glow -= 0.05;
 
           if (body.isHeld) continue;
@@ -704,15 +797,12 @@ export class SoftBodySystem {
           }
 
           // Gravity
-          // Only apply if not snapped (or check if snap support is still valid)
           if (body.snapTarget) {
-              // Check if snap target still exists/is valid
               const target = this.rigidBodies.find(b => b.id === body.snapTarget);
               if (target) {
-                  // Follow target
                   body.position.x = target.position.x;
                   body.position.z = target.position.z;
-                  body.position.y = target.position.y - 60; // Hardcoded stack height
+                  body.position.y = target.position.y - 60; 
                   body.rotation = target.rotation;
                   continue; 
               } else {
@@ -726,8 +816,6 @@ export class SoftBodySystem {
           body.position = this.vAdd(body.position, body.velocity);
           
           // Floor Collision
-          // Simple Plane at Y = height - size/2
-          // Note: In canvas, Y increases downwards.
           if (body.position.y > floorY - cubeHalf) {
               body.position.y = floorY - cubeHalf;
               body.velocity.y *= -0.4; // Bounce
@@ -755,16 +843,15 @@ export class SoftBodySystem {
       }
       
       // 2. Draw 3D Rigid Bodies
-      // We need to sort by Z for painter's algo.
-      // Since positive Z is depth (away), we draw largest Z first?
-      // No, standard coord: Z+ is out of screen? Or into?
-      // My spawn sets Z=0. Projection assumes +Z is depth? 
-      // Let's assume +Z is INTO screen for this simple implementation.
-      // So high Z drawn first (background), low Z last (foreground).
+      // Sort by Z for simple painter's algorithm
       const sortedBodies = [...this.rigidBodies].sort((a, b) => b.position.z - a.position.z);
       
       for (const body of sortedBodies) {
-          this.drawRigidBody3D(ctx, body);
+          if (body.type === 'dragon') {
+              this.drawDragon(ctx, body);
+          } else {
+              this.drawRigidBody3D(ctx, body);
+          }
       }
 
       // Draw Interaction Springs
@@ -780,29 +867,182 @@ export class SoftBodySystem {
       ctx.setLineDash([]);
   }
 
+  // Helper for internal projection used by both rigid body and dragon
+  projectPoint(ctx: CanvasRenderingContext2D, v: Vector3, pos: Vector3, rot: Quaternion, f: number = 1000): {x:number, y:number, scale:number} | null {
+      const cx = ctx.canvas.width / 2;
+      const cy = ctx.canvas.height / 2;
+      
+      const r = this.vRotate(v, rot);
+      const world = this.vAdd(r, pos);
+      
+      const dx = world.x - cx;
+      const dy = world.y - cy;
+      const dz = world.z;
+      
+      const depth = f + dz;
+      if (depth < 10) return null;
+      
+      const scale = f / depth;
+      return {
+          x: cx + dx * scale,
+          y: cy + dy * scale,
+          scale
+      };
+  }
+
+  drawDragon(ctx: CanvasRenderingContext2D, body: RigidBody3D) {
+      if (!body.dragonConfig) return;
+
+      const { jawAngle, neckPhase } = body.dragonConfig;
+      
+      // 1. Draw Body (Torso) using standard RigidBody logic but with Dragon specific shading
+      this.drawRigidBody3D(ctx, body);
+
+      // 2. Procedural Neck, Head, Tail
+      const cx = ctx.canvas.width / 2;
+      const cy = ctx.canvas.height / 2;
+      const f = 1000;
+
+      // Local Project Helper specifically for chained parts relative to body
+      const projectRelative = (v: Vector3, parentPos: Vector3, parentRot: Quaternion) => {
+          return this.projectPoint(ctx, v, parentPos, parentRot, f);
+      };
+
+      // --- NECK GENERATION ---
+      const neckSegments = 8;
+      const segLen = 12;
+      let currPos = { x: 0, y: -20, z: -30 }; // Start at front-top of torso
+      let prevScreen = projectRelative(currPos, body.position, body.rotation);
+
+      // Neck spine points for drawing
+      const spinePoints: {x:number, y:number, s:number}[] = [];
+      if (prevScreen) spinePoints.push({x: prevScreen.x, y: prevScreen.y, s: prevScreen.scale});
+
+      for(let i=0; i<neckSegments; i++) {
+          // Sine wave animation for neck
+          const sway = Math.sin(neckPhase + i * 0.5) * 5;
+          const arch = -Math.sin((i / neckSegments) * Math.PI) * 10; // Arch up
+
+          currPos = {
+              x: currPos.x + sway,
+              y: currPos.y - segLen + arch * 0.5,
+              z: currPos.z - 5 // Slight forward tilt
+          };
+
+          const p = projectRelative(currPos, body.position, body.rotation);
+          if (p) {
+              // Draw Segment (Sphere-ish)
+              const radius = 20 * (1 - i/neckSegments) + 10; // Taper
+              ctx.beginPath();
+              ctx.fillStyle = i % 2 === 0 ? '#22c55e' : '#16a34a'; // Striped scales
+              ctx.arc(p.x, p.y, radius * p.scale, 0, Math.PI*2);
+              ctx.fill();
+              
+              spinePoints.push({x: p.x, y: p.y, s: p.scale});
+          }
+      }
+
+      // --- HEAD ---
+      const headPosLocal = currPos;
+      const headProj = projectRelative(headPosLocal, body.position, body.rotation);
+      
+      if (headProj) {
+          const headScale = headProj.scale;
+          const hX = headProj.x;
+          const hY = headProj.y;
+
+          ctx.save();
+          ctx.translate(hX, hY);
+          const lookSway = Math.sin(neckPhase) * 0.2;
+          ctx.rotate(lookSway);
+          ctx.scale(headScale, headScale);
+
+          // Jaw (Lower)
+          ctx.save();
+          ctx.rotate(jawAngle); 
+          ctx.fillStyle = '#14532d'; // Dark green
+          ctx.beginPath();
+          ctx.moveTo(-15, 10);
+          ctx.lineTo(15, 10);
+          ctx.lineTo(0, 40); // Pointy chin
+          ctx.fill();
+          // Teeth
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.moveTo(-10, 10); ctx.lineTo(-8, 5); ctx.lineTo(-6, 10);
+          ctx.moveTo(10, 10); ctx.lineTo(8, 5); ctx.lineTo(6, 10);
+          ctx.fill();
+          ctx.restore();
+
+          // Skull (Upper)
+          const headGrad = ctx.createLinearGradient(0, -20, 0, 20);
+          headGrad.addColorStop(0, '#4ade80');
+          headGrad.addColorStop(1, '#15803d');
+          ctx.fillStyle = headGrad;
+          
+          ctx.beginPath();
+          ctx.moveTo(-20, 10); 
+          ctx.lineTo(20, 10);  
+          ctx.lineTo(0, -40);  
+          ctx.closePath();
+          ctx.fill();
+
+          // Eyes
+          const drawEye = (ex: number, ey: number) => {
+              ctx.beginPath();
+              ctx.fillStyle = '#000'; // Socket
+              ctx.ellipse(ex, ey, 6, 4, 0, 0, Math.PI*2);
+              ctx.fill();
+              
+              // Glow
+              ctx.shadowBlur = 10;
+              ctx.shadowColor = '#fbbf24';
+              ctx.fillStyle = '#fbbf24';
+              ctx.beginPath();
+              ctx.arc(ex, ey, 2, 0, Math.PI*2);
+              ctx.fill();
+              ctx.shadowBlur = 0;
+          };
+          drawEye(-8, -15);
+          drawEye(8, -15);
+
+          // Horns
+          const drawHorn = (hx: number, hy: number, rot: number) => {
+              ctx.save();
+              ctx.translate(hx, hy);
+              ctx.rotate(rot);
+              ctx.fillStyle = '#d4d4d8'; // Bone
+              ctx.beginPath();
+              ctx.moveTo(-3, 0);
+              ctx.lineTo(3, 0);
+              ctx.quadraticCurveTo(0, -15, -10, -30); 
+              ctx.lineTo(-3, 0);
+              ctx.fill();
+              ctx.restore();
+          };
+          drawHorn(-15, 0, -0.3);
+          drawHorn(15, 0, 0.3);
+
+          ctx.restore();
+      }
+  }
+
   drawRigidBody3D(ctx: CanvasRenderingContext2D, body: RigidBody3D) {
       // Perspective Projection
-      const f = 1000; // Focal length
+      const f = 1000; 
       const cx = ctx.canvas.width / 2;
-      const cy = ctx.canvas.height / 2; // Actually we want relative to body pos? 
-      // Wait, standard projection: x' = x * (f/z).
-      // Our world coordinates are screen-aligned (0,0 top-left).
-      // We need a "Camera" center. Let's assume camera is at screen center, z = -f.
+      const cy = ctx.canvas.height / 2; 
       
       const project = (v: Vector3) => {
-          // 1. Rotate vertex by Body Rotation
           const r = this.vRotate(v, body.rotation);
-          // 2. Translate by Body Position
           const world = this.vAdd(r, body.position);
           
-          // 3. Project to Screen
-          // Relative to camera center
           const dx = world.x - cx;
           const dy = world.y - cy;
-          const dz = world.z; // Z=0 is screen plane
+          const dz = world.z; 
           
           const depth = f + dz;
-          if (depth < 10) return { x: world.x, y: world.y, scale: 0 }; // Behind cam
+          if (depth < 10) return { x: world.x, y: world.y, scale: 0 }; 
           
           const scale = f / depth;
           return {
@@ -812,19 +1052,14 @@ export class SoftBodySystem {
           };
       };
 
-      // Transform all vertices
       const projVerts = body.vertices.map(project);
-      
-      // Draw Faces
-      // Naive backface culling or Z-sorting of faces?
-      // For simple cubes, drawing all faces with transparency looks "Techy".
       
       ctx.lineWidth = 2;
       ctx.lineJoin = 'round';
 
-      // Glow effect
+      // Glow effect (Hover/Held feedback)
       if (body.glow > 0) {
-          ctx.shadowBlur = 20 * body.glow;
+          ctx.shadowBlur = 25 * body.glow;
           ctx.shadowColor = 'white';
       } else {
           ctx.shadowBlur = 0;
@@ -835,13 +1070,19 @@ export class SoftBodySystem {
           const p1 = projVerts[face.indices[1]];
           const p2 = projVerts[face.indices[2]];
           
-          // Check winding order for backface culling?
-          // (x1-x0)(y2-y0) - (x2-x0)(y1-y0)
           const cross = (p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y);
-          if (cross < 0) continue; // Cull back faces
+          if (cross < 0 && body.type !== 'dragon') continue; 
+
+          let brightness = 1.0;
+          if (body.type === 'dragon') {
+              const cx = (p0.x + p1.x + p2.x)/3;
+              const distToCenter = Math.hypot(cx - ctx.canvas.width/2, (p0.y + p1.y + p2.y)/3 - ctx.canvas.height/2);
+              brightness = Math.max(0.4, 1.0 - (distToCenter / 500));
+          }
 
           ctx.fillStyle = face.color || body.color;
-          ctx.strokeStyle = body.color;
+          ctx.strokeStyle = body.type === 'dragon' ? 'rgba(0,0,0,0.1)' : body.color;
+          ctx.lineWidth = body.type === 'dragon' ? 1 : 2;
           
           ctx.beginPath();
           ctx.moveTo(p0.x, p0.y);
@@ -851,121 +1092,73 @@ export class SoftBodySystem {
           }
           ctx.closePath();
           ctx.fill();
-          ctx.stroke();
+          
+          if (body.type !== 'dragon') ctx.stroke();
       }
       ctx.shadowBlur = 0;
   }
 
   drawDevilHorn(ctx: CanvasRenderingContext2D, obj: SoftBodyObject) {
       if (!obj.points[0] || !obj.growth) return;
+      const growth = obj.growth || 0;
+      if (growth <= 0) return; 
+
       const base = obj.points[0];
       const scale = obj.config.scale || 100;
-      const sideMult = obj.config.side === 'left' ? -1 : 1;
-      const growth = obj.growth;
-
-      if (growth < 0.05) return;
-
-      const start = { x: base.x, y: base.y };
-      const cp1 = { x: base.x + (60 * scale / 100 * sideMult), y: base.y - (20 * scale / 100) };
-      const cp2 = { x: base.x + (70 * scale / 100 * sideMult), y: base.y - (100 * scale / 100) };
-      const end = { x: base.x + (30 * scale / 100 * sideMult), y: base.y - (140 * scale / 100) };
-
-      const getBezierPoint = (t: number) => {
-          const mt = 1 - t;
-          const mt2 = mt * mt;
-          const mt3 = mt2 * mt;
-          const t2 = t * t;
-          const t3 = t2 * t;
-          return {
-              x: start.x * mt3 + 3 * cp1.x * mt2 * t + 3 * cp2.x * mt * t2 + end.x * t3,
-              y: start.y * mt3 + 3 * cp1.y * mt2 * t + 3 * cp2.y * mt * t2 + end.y * t3
-          };
-      };
-
-      const getNormal = (t: number) => {
-          const mt = 1 - t;
-          const dC = {
-              x: 3*mt*mt*(cp1.x-start.x) + 6*mt*t*(cp2.x-cp1.x) + 3*t*t*(end.x-cp2.x),
-              y: 3*mt*mt*(cp1.y-start.y) + 6*mt*t*(cp2.y-cp1.y) + 3*t*t*(end.y-cp2.y)
-          };
-          const len = Math.sqrt(dC.x*dC.x + dC.y*dC.y);
-          return { x: -dC.y / len, y: dC.x / len };
-      };
-
-      const segments = 24; 
-      const leftPath: {x:number, y:number}[] = [];
-      const rightPath: {x:number, y:number}[] = [];
-      const centerPath: {x:number, y:number}[] = [];
-      const maxT = growth; 
-
-      for (let i = 0; i <= segments; i++) {
-          const t = (i / segments) * maxT;
-          const center = getBezierPoint(t);
-          const normal = getNormal(t);
-          const taper = (1 - (t / 1.0)); 
-          const radius = (35 * scale / 100) * (taper * taper + 0.2 * taper); 
-          leftPath.push({ x: center.x + normal.x * radius, y: center.y + normal.y * radius });
-          rightPath.push({ x: center.x - normal.x * radius, y: center.y - normal.y * radius });
-          centerPath.push(center);
-      }
+      const side = obj.config.side; 
+      const sideMult = side === 'left' ? -1 : 1;
+      const rot = obj.config.baseAngle || 0;
 
       ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      ctx.shadowBlur = 25 * growth;
-      ctx.shadowColor = '#dc2626'; 
-      ctx.fillStyle = '#7f1d1d';
-      
+      ctx.translate(base.x, base.y);
+      ctx.rotate(rot);
+
+      const S = scale; 
+
+      // Stylized Horn Shape
       ctx.beginPath();
-      ctx.moveTo(leftPath[0].x, leftPath[0].y);
-      for (const p of leftPath) ctx.lineTo(p.x, p.y);
-      ctx.lineTo(centerPath[centerPath.length-1].x, centerPath[centerPath.length-1].y);
-      for (let i = rightPath.length - 1; i >= 0; i--) ctx.lineTo(rightPath[i].x, rightPath[i].y);
+      // Base width approx 0.6 * S
+      ctx.moveTo(-S * 0.3 * sideMult, 0);
+      
+      const tipX = S * 0.4 * sideMult;
+      const tipY = -S * 1.5;
+      
+      // Outer curve (Convex)
+      ctx.quadraticCurveTo(
+          S * 0.8 * sideMult, -S * 0.5, 
+          tipX, tipY 
+      );
+      
+      // Inner curve (Concave)
+      ctx.quadraticCurveTo(
+          S * 0.1 * sideMult, -S * 0.8,
+          -S * 0.1 * sideMult, 0
+      );
+      
       ctx.closePath();
-      ctx.fill();
 
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.shadowBlur = 0;
-
-      const grad = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
-      grad.addColorStop(0.0, '#450a0a'); 
-      grad.addColorStop(0.4, '#991b1b'); 
-      grad.addColorStop(0.8, '#ef4444'); 
-      grad.addColorStop(1.0, '#fca5a5'); 
+      // Style: Glossy Red / Devilish
+      const grad = ctx.createLinearGradient(0, 0, tipX, tipY);
+      grad.addColorStop(0, '#7f1d1d'); // Dark red base
+      grad.addColorStop(0.4, '#dc2626'); // Red mid
+      grad.addColorStop(0.8, '#ef4444'); // Bright red tip
+      grad.addColorStop(1.0, '#fca5a5'); // Highlight tip
 
       ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(leftPath[0].x, leftPath[0].y);
-      for (const p of leftPath) ctx.lineTo(p.x, p.y);
-      ctx.lineTo(centerPath[centerPath.length-1].x, centerPath[centerPath.length-1].y);
-      for (let i = rightPath.length - 1; i >= 0; i--) ctx.lineTo(rightPath[i].x, rightPath[i].y);
-      ctx.closePath();
+      ctx.shadowColor = '#b91c1c';
+      ctx.shadowBlur = 15;
       ctx.fill();
+      ctx.shadowBlur = 0;
 
-      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-      ctx.lineWidth = 4;
-      ctx.filter = 'blur(4px)';
-      ctx.stroke();
-      ctx.filter = 'none';
-
+      // Rim Light / Gloss
       ctx.beginPath();
-      for (let i = 0; i < centerPath.length - 2; i++) {
-          const c = centerPath[i];
-          const n = getNormal((i/segments)*maxT);
-          const shift = (10 * scale / 100);
-          const hx = c.x + n.x * (sideMult * shift * 0.5);
-          const hy = c.y + n.y * (sideMult * shift * 0.5);
-          
-          if (i===0) ctx.moveTo(hx, hy);
-          else ctx.lineTo(hx, hy);
-      }
+      ctx.moveTo(0, -S * 0.2);
+      ctx.quadraticCurveTo(S * 0.4 * sideMult, -S * 0.6, tipX * 0.8, tipY * 0.8);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = 2;
       ctx.lineCap = 'round';
-      ctx.lineWidth = 6 * scale / 100;
-      ctx.strokeStyle = 'rgba(255, 200, 200, 0.4)'; 
       ctx.stroke();
-      
-      ctx.lineWidth = 2 * scale / 100;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'; 
-      ctx.stroke();
+
       ctx.restore();
   }
 

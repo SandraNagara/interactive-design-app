@@ -72,11 +72,20 @@ export interface Quaternion {
 export interface Face {
   indices: number[]; // Vertex indices
   color?: string;
+  normal?: Vector3; // Calculated face normal
+}
+
+export interface DragonConfig {
+  jawAngle: number;
+  neckPhase: number;
+  wingPhase: number;
+  eyeColor: string;
+  scale: number;
 }
 
 export interface RigidBody3D {
   id: string;
-  type: 'cube' | 'pyramid';
+  type: 'cube' | 'pyramid' | 'dragon';
   position: Vector3;
   rotation: Quaternion;
   scale: Vector3;
@@ -89,4 +98,5 @@ export interface RigidBody3D {
   snapTimer: number; // For stabilization delay
   color: string;
   glow: number; // 0-1 for interaction feedback
+  dragonConfig?: DragonConfig; // Specific state for dragon animation
 }

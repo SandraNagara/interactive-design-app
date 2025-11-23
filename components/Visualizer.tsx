@@ -236,6 +236,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
           if (e.key === '3') softBodyRef.current.spawnCastle(cx, cy + 150);
           if (e.key === '4') softBodyRef.current.spawnCube3D(cx, cy - 200); // Spawn in air
           if (e.key === '5') softBodyRef.current.spawnPyramid3D(cx, cy - 200);
+          if (e.key === '6') softBodyRef.current.spawnDragon(cx, cy - 100);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -402,26 +403,38 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
                 censorFace(ctx, face);
             }
 
-            // 3D INTERACTION
-            // We pass mirrored coords, and computed rotation
-            sb.handleInteraction3D(handIndex, cx, cy, cz, handGesture === 'PINCH', rotation);
+            // 3D INTERACTION - PRIORITIZED
+            // Fist or Pinch enables grabbing logic
+            const isGrabbing3D = handGesture === 'PINCH' || handGesture === 'FIST';
+            sb.handleInteraction3D(handIndex, cx, cy, cz, isGrabbing3D, rotation);
 
-            // 2D Soft Body Interactions
-            if (handGesture === 'FIST') {
-                sb.crumple(cx, cy, 180, 1.5);
-                ctx.strokeStyle = 'rgba(255, 50, 50, 0.4)';
-                ctx.beginPath(); ctx.arc(cx, cy, 80, 0, Math.PI*2); ctx.stroke();
-            }
-            if (handGesture === 'PINCH') {
-                const pinchX = (1 - (thumbTip.x + indexTip.x) / 2) * canvas.width;
-                const pinchY = (thumbTip.y + indexTip.y) / 2 * canvas.height;
-                sb.handleInteraction(handIndex, pinchX, pinchY, true);
+            // Check if this hand is actually holding a 3D object
+            const isHolding3D = sb.heldObjects.has(handIndex);
+
+            // 2D Soft Body Interactions (Only if not holding a 3D object)
+            if (!isHolding3D) {
+                // If Fist, also try to Crumple 2D
+                if (handGesture === 'FIST') {
+                    sb.crumple(cx, cy, 180, 1.5);
+                    ctx.strokeStyle = 'rgba(255, 50, 50, 0.4)';
+                    ctx.beginPath(); ctx.arc(cx, cy, 80, 0, Math.PI*2); ctx.stroke();
+                }
+                
+                // 2D Grab logic (springs)
+                if (handGesture === 'PINCH') {
+                    const pinchX = (1 - (thumbTip.x + indexTip.x) / 2) * canvas.width;
+                    const pinchY = (thumbTip.y + indexTip.y) / 2 * canvas.height;
+                    sb.handleInteraction(handIndex, pinchX, pinchY, true);
+                } else {
+                    sb.handleInteraction(handIndex, 0, 0, false);
+                }
+
+                if (handGesture === 'OPEN_PALM') {
+                    sb.fold(cx, cy, 220, velocity);
+                }
             } else {
+                // Ensure 2D interaction is cleared if we switch to 3D hold
                 sb.handleInteraction(handIndex, 0, 0, false);
-            }
-
-            if (handGesture === 'OPEN_PALM') {
-                sb.fold(cx, cy, 220, velocity);
             }
         } else {
             sb.handleInteraction(handIndex, 0, 0, false);
@@ -495,8 +508,8 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
       <video ref={videoRef} className="absolute opacity-0 pointer-events-none" autoPlay playsInline muted />
       <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full object-cover" />
       
-      {/* HUD - Stats */}
-      <div className="absolute top-4 left-4 pointer-events-none select-none z-30">
+      {/* HUD - Stats & Object List */}
+      <div className="absolute top-4 left-4 flex flex-col gap-4 pointer-events-none select-none z-30">
         <div className="bg-black/60 backdrop-blur-sm border-l-2 border-green-500 p-4 text-xs font-mono text-green-400 shadow-[0_0_15px_rgba(0,255,0,0.2)]">
           <div className="mb-2 text-white font-bold tracking-widest">SYSTEM MONITOR</div>
           <div className="grid grid-cols-2 gap-x-8 gap-y-1">
@@ -507,6 +520,19 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
             <span>LIGHT:</span> <span className="text-white">{stats.brightness}%</span>
           </div>
         </div>
+
+        {/* 2D/3D Objects List (Moved to Left) */}
+        <div className="px-4 py-2 bg-zinc-900/60 border border-zinc-700/30 backdrop-blur-sm rounded text-[10px] font-mono text-zinc-400 text-left">
+          <p className="font-bold text-white mb-1">2D OBJECTS</p>
+          <p>[1] CAR</p>
+          <p>[2] PLANT</p>
+          <p>[3] CASTLE</p>
+          <p className="font-bold text-white mt-2 mb-1">3D OBJECTS</p>
+          <p>[4] CUBE</p>
+          <p>[5] PYRAMID</p>
+          <p className="text-yellow-400 font-bold">[6] DRAGON 🐉</p>
+          <p className="mt-2">[+/-] SENSITIVITY</p>
+        </div>
       </div>
 
       {/* HUD - Gesture Overlay */}
@@ -516,11 +542,11 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
             <span className="text-2xl drop-shadow-md">✋</span>
         </div>
         <div className={`flex items-center justify-end gap-3 p-2 rounded-lg transition-all duration-300 ${gesture === 'FIST' ? 'bg-red-500/40 scale-110 shadow-lg shadow-red-500/20 translate-x-[-10px]' : 'bg-black/40 opacity-50'}`}>
-            <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">Crumple</span>
+            <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">Grab/Crumple</span>
             <span className="text-2xl drop-shadow-md">✊</span>
         </div>
         <div className={`flex items-center justify-end gap-3 p-2 rounded-lg transition-all duration-300 ${gesture === 'PINCH' ? 'bg-yellow-500/40 scale-110 shadow-lg shadow-yellow-500/20 translate-x-[-10px]' : 'bg-black/40 opacity-50'}`}>
-            <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">Stretch/Grab</span>
+            <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">Pick Up</span>
             <span className="text-2xl drop-shadow-md">🤏</span>
         </div>
         <div className={`flex items-center justify-end gap-3 p-2 rounded-lg transition-all duration-300 ${gesture === 'HORNS' ? 'bg-orange-500/40 scale-110 shadow-lg shadow-orange-500/20 translate-x-[-10px]' : 'bg-black/40 opacity-50'}`}>
@@ -529,7 +555,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
         </div>
       </div>
 
-      {/* Controls */}
+      {/* Controls (Right Top) */}
       <div className="absolute top-4 right-4 flex flex-col gap-2 select-none z-30">
         <button 
           onClick={cycleMode}
@@ -543,16 +569,6 @@ export const Visualizer: React.FC<VisualizerProps> = ({ onClose }) => {
         >
           [C] CLEAR / [Q] QUIT
         </button>
-         <div className="mt-2 px-4 py-2 bg-zinc-900/60 border border-zinc-700/30 rounded text-[10px] font-mono text-zinc-400 text-right">
-          <p className="font-bold text-white mb-1">2D OBJECTS</p>
-          <p>[1] CAR</p>
-          <p>[2] PLANT</p>
-          <p>[3] CASTLE</p>
-          <p className="font-bold text-white mt-2 mb-1">3D OBJECTS</p>
-          <p>[4] CUBE</p>
-          <p>[5] PYRAMID</p>
-          <p className="mt-2">[+/-] SENSITIVITY</p>
-        </div>
       </div>
     </div>
   );
