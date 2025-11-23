@@ -1,0 +1,7 @@
+{
+  "name": "LuminaFlow",
+  "description": "A TouchDesigner-style interactive visualizer running in the browser. It uses MediaPipe for hand tracking and computer vision for light detection to generate fluid particle systems overlaying your camera feed.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
